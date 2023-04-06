@@ -1,0 +1,266 @@
+#!/usr/bin/env bash
+
+export TMPDIR="${TMPDIR:-/tmp}"
+export TS_SOCKET="${TMPDIR}/runman.ts.socket"
+export TS_SLOTS="$(nproc)"
+export TS_MAXFINISHED="$((10*TS_SLOTS))" # Making this 0 won't show status of finished jobs
+export TS_ENV='echo "User: ${USER}\nComment: ${comment}\nStdout: ${stdout}\nStderr: ${stderr}"'
+export TS_ONFINISH="${BASH_SOURCE}"
+
+_log(){
+  # Log the given message at stderr
+  # Usage: _log <message string>
+  echo -e "${1}"
+}>&2
+
+# Create system wide task-spooler daemon, if non-existing
+(tsp && chmod a+rw "${TS_SOCKET}")>/dev/null || { _log "Problem with task-spooler (command: tsp)"; exit 1;}
+
+_about(){
+  # Shows about info
+  _log "Run Man(ager)"
+  _log "About: A wrapper of task-spooler for scheduling jobs/runs in a multicore compute node."
+  _log "Repo: https://github.com/SomajitDey/runman"
+  _log "Usage: runman help"
+}
+
+_tg_check(){
+  # Checks if telegram.sh is configured for notification
+  if telegram -n 'dry-run' &>/dev/null; then
+    _log "Telegram is all set to notify you when job finishes, provided internet connectivity is there."
+  else
+    _log "Cannot notify via Telegram when job finishes. Setup Telegram feed with: runman tgfeed"
+    return 1
+  fi
+}
+
+_read_job_file(){
+  # Usage: _read_job_file <path.job>
+
+  jobfile="${1:-"${jobfile}"}"
+
+  # .job file contains the following key-value pairs
+  # Defaults are provided wherever applicable
+
+  cmd= # Command with arguments | Path to executable/script
+  ncpu=1 # Number of cores required to run the job
+  comment= # Comment/Remarks
+  stdout= # Path to stdout
+  stderr= # Path to stderr
+  wclock= # Max. wall clock time job can run
+  cwd="${PWD}" # Current working directory
+  after= # ID of a job the current job is dependent on
+
+  # Source given .job file
+  . "${jobfile}" || { _log "Problem reading ${jobfile}. Exiting."; exit 1;}
+
+  # Export those env vars that need to be accessed using TS_ENV (tsp -i <jobid>) later
+  export comment stdout stderr
+}
+
+_create_job(){
+  # Uses variables read/set by _read_job_file
+  # Operates in a sub-shell so as not to corrupt global environment
+  # Outputs job id
+  (
+  cd "${cwd}"
+  export OMP_NUM_THREADS="${ncpu}"
+  local dep_opt="${after:+"-D ${after}"}"
+  local err_opt="${stderr:+'-E'}"
+  local timeout="${wclock:+"timeout --kill-after=0.5s ${wclock}"}"
+  tsp -N "${ncpu}" -L "${ncpu}@${USER}" ${dependency} ${err_opt} ${timeout} ${cmd} \
+    || { _log "Failed to submit ${jobfile}. Exiting."; exit 1;}
+  )
+}
+
+_ts_onfinish(){
+  # Effectively called by task-spooler after job finishes
+  # Usage: _ts_onfinish <jobid> <errorlevel> <output_filename> <command>
+  local jobid="${1}" errlvl="${2}" tmp_stdout="${3}" cmd="${4}"
+  if [[ "${cmd}" =~ ^timeout\  ]] && (( errlvl == 124 )); then
+    errlvl="${errlvl} (timed out)"
+  fi
+  local status="$(echo "Job ID: ${jobid}"; echo "Exit Code: ${errlvl}"; tsp -i "${jobid}")"
+  local stdout="$(grep ^Stdout: <<< "${status}" | cut -d ' ' -f 2)"
+  local stderr="$(grep ^Stderr: <<< "${status}" | cut -d ' ' -f 2)"
+  mv -f "${tmp_stdout}" "${stdout}"
+  mv -f "${tmp_stdout}.e" "${stderr}"
+  telegram -T "RunMan@$(hostname)" -M "${status}"
+}
+
+_kill_proc_tree(){
+  # Kills given process and all its descendants (with given signal) 
+  # If there's a - infront of the given process id, doesn't kill its descendants
+  # Usage: _kill_proc_tree [-]<ppid> [<SIGspec>]
+  local pid ppid="${1#-}" sig="${2:-KILL}"
+  # Note that following loop is not entered if $1 is negative
+  for pid in $(pgrep -P "${1}"); do
+    _kill_proc_tree "${pid}" "${sig}" &
+  done
+  kill "-${sig}" "${ppid}"
+}
+
+_runman_sub(){
+  # Reads given job files and submits/enqueues them
+  # Usage: _runman_sub <path.job>...
+  
+  _tg_check
+  local jobfile
+  for jobfile in "${@}"; do
+    _read_job_file
+    echo "Job ID for ${jobfile}: $(_create_job)"
+  done
+}
+
+_runman_stat(){
+  # Shows status of given job
+  # Usage: _runman_stat <jobid>
+  tsp -i "${1}" 2>/dev/null || _log "Job has either finished or is non-existent"
+}
+
+_runman_abort(){
+  # Aborts given job, i.e. its entire process tree (with given signal)
+  # If there's a - infront of jobid, kills process leader only
+  # Usage: _runman_abort [-]<jobid> [<SIGspec>]
+  
+  local jobid="${1#-}"
+  local ppid="$(tsp -p "${jobid}" 2>/dev/null)" sig="${2}"
+  # ppid doesn't exist when job is queued (i.e. yet to run)
+  if [[ -n "${ppid}" ]]; then
+    _kill_proc_tree "${1%${jobid}}${ppid}" "${sig}"
+  else
+    _runman_del "${jobid}"
+  fi
+}
+
+_runman_del(){
+  # Deletes given job
+  # Usage: _runman_del <jobid>
+  tsp -r "${1}" || _log "Try aborting."
+}
+
+_runman_list(){
+  # Lists all unfinished jobs by the USER
+  _log "ID\tState\tComment"
+  local jobid buffer1="$(mktemp -u)" buffer2="$(mktemp -u)"
+  trap "rm -f ${buffer1} ${buffer2}" return
+  tsp | grep -E "[[[:digit:]]+@${USER}]" | awk '{print $1, $2}' | grep -vw 'finished' > "${buffer1}"
+  for jobid in $(awk '{print $1}' "${buffer1}"); do
+    tsp -i "${jobid}" | grep ^Comment: | cut -d ' ' -f 2-
+  done > "${buffer2}"
+  paste "${buffer1}" "${buffer2}" 
+}
+
+_runman_swap(){
+  # Swaps queue positions of the scheduled jobs
+  # If the second jobID is not provided, make the first job run as soon as possible
+  # Usage: _runman_swap <jobID> [<jobID>]
+  local jobID="${1}" swap_with="${2}"
+  if [[ -z "${swap_with}" ]]; then
+    swap_with="$(_runman_list 2>/dev/null | head -n1 | awk '{print $1}')"
+  fi
+  tsp -U "${jobID}"-"${swap_with}"
+}
+
+_runman_tgfeed(){
+  # Sets up Telegram feed for you
+
+  export TELEGRAM_TOKEN TELEGRAM_CHAT
+  cat <<- EOF
+  This will help you setup your Telegram feed in no time. Just follow the steps below.
+  Note: Proceed only after making sure we are connected to the internet.
+  Step 0: Install telegram from https://github.com/fabianonline/telegram.sh
+    - Download with: curl -LO https://raw.githubusercontent.com/fabianonline/telegram.sh/master/telegram
+    - Set permission with: chmod +rx telegram
+    - Install at PATH: sudo install telegram /usr/local/bin
+    - Or install locally and put the installation directory in PATH in ~/.bashrc
+  Step 1: On your smartphone's Telegram app, search for @botfather and start a chat.
+  Step 2: Use the /newbot command to create a new bot. BotFather will give you a token. Provide it below.
+EOF
+  read -p "Token: " TELEGRAM_TOKEN
+  while ! telegram -m &>/dev/null; do
+    _log "Wrong Token provided. Please re-enter."
+    read -p "Token: " TELEGRAM_TOKEN
+  done
+  cat <<- EOF
+  Step 3: Start a chat with your newly created bot. Send it your user ID, i.e.: ${USER}.
+EOF
+  read -p "Press any key after completing step 3:"$'\n' -s -n1
+  local buffer="$(mktemp -u)"
+  trap "rm -f ${buffer}" return
+  while !(telegram -m | grep -iw "${USER}")>"${buffer}"; do
+    read -p "Press any key after completing step 3 AGAIN:"$'\n' -s -n1
+  done
+  TELEGRAM_CHAT="$(awk '{print $2}' "${buffer}")"
+  _tg_check || { _log "Something went wrong. Try again."; exit 1;}
+  echo -e "TELEGRAM_TOKEN='${TELEGRAM_TOKEN}'\nTELEGRAM_CHAT='${TELEGRAM_CHAT}'" > "${HOME}/.telegram.sh.conf"
+} >&2
+
+_runman_help(){ 
+  # Shows usage info
+  cat <<- EOF
+    Syntax: runman <subcmd> <args>
+
+    List of subcommands with their arguments:
+    
+    sub <path to .job file> ...
+      Reads provided .job file(s) and enqueues the corresponding jobs. Provides job ID at stdout.
+      
+    stat <job ID>
+      Shows status of given job.
+      
+    abort [-]<jobid> [<SIGspec>]
+      Aborts given job, i.e. its entire process tree, with SIGKILL.
+      If signal specification is provided (kill -l), use it instead.
+      If there's a - infront of jobid, kills process leader only.
+    
+    del <jobid>
+      Deletes given job
+      
+    list
+      Lists all unfinished jobs by the USER
+      
+    swap <jobID> [<jobID>]
+      Swaps queue positions of the scheduled jobs.
+      If the second jobID is not provided, make the first job run ASAP.
+      
+    tgfeed
+      Guides in setting up Telegram feed.
+      
+    help
+      Shows this help.
+      
+    .job file syntax:
+    
+    # This is a comment line
+    # .job files contain some or all of the following key-value pairs to list USER's requirements
+    # Default values are provided for reference
+    # Values with spaces etc. must be provided within quotes for safety
+    
+    cmd= # (Mandatory) Command or Path to executable/script, with or without arguments
+    ncpu=1 # Number of cores required to run the job
+    comment= # Comment/Remarks
+    stdout= # Path to stdout
+    stderr= # Path to stderr
+    wclock= # Max. wall clock time job can run
+    cwd="${PWD}" # Current working directory
+    after= # ID of a job the current job is dependent on
+    
+EOF
+}
+
+_main(){
+  # The main driver
+  
+  if [[ -z "${@}" ]]; then
+    _about
+  elif [[ "${1}" =~ ^[[:digit:]]+$ ]]; then
+    _ts_onfinish "${@}"
+  elif (declare -F | grep -w "_runman_${1}")&>/dev/null; then
+    "_runman_${@}"
+  else
+    _log "Bad usage. See: runman help"
+  fi
+}
+
+_main "${@}"

@@ -1,0 +1,5 @@
+# Example .job file
+
+cmd="echo Hello World!"
+stdout=example.out
+comment="Hello World example"
