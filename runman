@@ -13,8 +13,10 @@ _log(){
   echo -e "${1}"
 }>&2
 
-# Create system wide task-spooler daemon, if non-existing
-(tsp && chmod a+rw "${TS_SOCKET}")>/dev/null || { _log "Problem with task-spooler (command: tsp)"; exit 1;}
+# Create system wide task-spooler socket, if non-existing
+if ! [[ -S "${TS_SOCKET}" ]]; then
+  (tsp && chmod a+rw "${TS_SOCKET}")>/dev/null || { _log "Problem with task-spooler (command: tsp)"; exit 1;}
+fi
 
 _about(){
   # Shows about info
@@ -165,15 +167,29 @@ _runman_swap(){
 _runman_tgfeed(){
   # Sets up Telegram feed for you
 
+  local tg_local_conf="${HOME}/.telegram.sh.conf"
+  rm -f "${tg_local_conf}" # Delete earlier config for resetting purpose
+
   export TELEGRAM_TOKEN TELEGRAM_CHAT
+
+  # Intro
   cat <<- EOF
-  This will help you setup your Telegram feed in no time. Just follow the steps below.
+  This will help you setup your Telegram feed in no time. Just follow the steps below (skipping unnecessary steps).
   Note: Proceed only after making sure we are connected to the internet.
+EOF
+
+  # Install telegram, if not installed
+  which telegram &>/dev/null || cat <<- EOF
   Step 0: Install telegram from https://github.com/fabianonline/telegram.sh
     - Download with: curl -LO https://raw.githubusercontent.com/fabianonline/telegram.sh/master/telegram
     - Set permission with: chmod +rx telegram
     - Install at PATH: sudo install telegram /usr/local/bin
     - Or install locally and put the installation directory in PATH in ~/.bashrc
+EOF
+
+  # Creating bot and token, if non-existent. Not needed if admin provides token in /etc/telegram.sh.conf.
+  if ! telegram -m &>/dev/null; then
+  cat <<-EOF
   Step 1: On your smartphone's Telegram app, search for @botfather and start a chat.
   Step 2: Use the /newbot command to create a new bot. BotFather will give you a token. Provide it below.
 EOF
@@ -182,18 +198,22 @@ EOF
     _log "Wrong Token provided. Please re-enter."
     read -p "Token: " TELEGRAM_TOKEN
   done
+  echo "TELEGRAM_TOKEN='${TELEGRAM_TOKEN}'" > "${tg_local_conf}"
+  fi
+  
+  # Getting chat ID
   cat <<- EOF
-  Step 3: Start a chat with your newly created bot. Send it your user ID, i.e.: ${USER}.
+  Step 3: Start a chat with your bot. Send it your user ID, i.e.: ${USER}.
 EOF
   read -p "Press any key after completing step 3:"$'\n' -s -n1
   local buffer="$(mktemp -u)"
-  trap "rm -f ${buffer}" return
+  trap "rm -f ${buffer}" return exit
   while !(telegram -m | grep -iw "${USER}")>"${buffer}"; do
     read -p "Press any key after completing step 3 AGAIN:"$'\n' -s -n1
   done
   TELEGRAM_CHAT="$(awk '{print $2}' "${buffer}")"
   _tg_check || { _log "Something went wrong. Try again."; exit 1;}
-  echo -e "TELEGRAM_TOKEN='${TELEGRAM_TOKEN}'\nTELEGRAM_CHAT='${TELEGRAM_CHAT}'" > "${HOME}/.telegram.sh.conf"
+  echo "TELEGRAM_CHAT='${TELEGRAM_CHAT}'" > "${tg_local_conf}"
 } >&2
 
 _runman_help(){ 
