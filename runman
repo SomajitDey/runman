@@ -267,7 +267,7 @@ _runman_help(){
     stdout= # Path to stdout
     stderr= # Path to stderr
     wclock= # Max. wall clock time job can run
-    cwd="${PWD}" # Current working directory
+    cwd="\${PWD}" # Current working directory. Default is the directory from where runman is called
     after= # ID of a job the current job is dependent on
     
 EOF
