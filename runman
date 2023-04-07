@@ -247,6 +247,10 @@ _runman_help(){
     tgfeed
       Guides in setting up Telegram feed.
       
+    tsp <argument> ...
+      Executes tsp in runman's environment. Mainly for admin use and
+      going beyond runman's capabilities. Tasks are labelled as [#cpu@USER].
+    
     help
       Shows this help.
       
@@ -276,6 +280,8 @@ _main(){
     _about
   elif [[ "${1}" =~ ^[[:digit:]]+$ ]]; then
     _ts_onfinish "${@}"
+  elif [[ "${1}" == 'tsp' ]]; then
+    "${@}"
   elif (declare -F | grep -w "_runman_${1}")&>/dev/null; then
     "_runman_${@}"
   else
