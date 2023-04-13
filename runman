@@ -4,7 +4,7 @@ export TMPDIR="${TMPDIR:-/tmp}"
 export TS_SOCKET="${TMPDIR}/runman.ts.socket"
 export TS_SLOTS="$(nproc)"
 export TS_MAXFINISHED="$((10*TS_SLOTS))" # Making this 0 won't show status of finished jobs
-export TS_ENV='echo "User: ${USER}\nComment: ${comment}\nStdout: ${stdout}\nStderr: ${stderr}"'
+export TS_ENV='echo "User: ${USER}\nComment: ${comment}\nWork Dir:${PWD}\nStdout: ${stdout}\nStderr: ${stderr}"'
 export TS_ONFINISH="${BASH_SOURCE}"
 
 _log(){
@@ -68,9 +68,9 @@ _create_job(){
   cd "${cwd}"
   export OMP_NUM_THREADS="${ncpu}"
   local dep_opt="${after:+"-D ${after}"}"
-  local err_opt="${stderr:+'-E'}"
+  local err_opt="${stderr:+"-E"}"
   local timeout="${wclock:+"timeout --kill-after=0.5s ${wclock}"}"
-  tsp -N "${ncpu}" -L "${ncpu}@${USER}" ${dependency} ${err_opt} ${timeout} ${cmd} \
+  tsp -N "${ncpu}" -L "${ncpu}@${USER}" ${dep_opt} ${err_opt} ${timeout} ${cmd} \
     || { _log "Failed to submit ${jobfile}. Exiting."; exit 1;}
   )
 }
@@ -88,6 +88,7 @@ _ts_onfinish(){
   mv -f "${tmp_stdout}" "${stdout}"
   mv -f "${tmp_stdout}.e" "${stderr}"
   telegram -T "RunMan@$(hostname)" -M "${status}"
+  # TODO: Kill children, if still running, once the process leader exits
 }
 
 _kill_proc_tree(){

@@ -44,3 +44,6 @@ In such a case, all the `USER`s must be sent the Telegram address of the bot: `@
 ```bash
 runman tgfeed
 ```
+
+### Known Issue(s)
+- The key value pair `stderr=<path>` provided in `.job` file doesn't work, atleast in Ubuntu 20.04. The underlying reason seems to be a bug in task-spooler itself: `tsp -E` doesn't work as expected.
