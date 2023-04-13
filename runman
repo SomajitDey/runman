@@ -156,13 +156,13 @@ _runman_list(){
 
 _runman_swap(){
   # Swaps queue positions of the scheduled jobs
-  # If the second jobID is not provided, make the first job run as soon as possible
-  # Usage: _runman_swap <jobID> [<jobID>]
-  local jobID="${1}" swap_with="${2}"
+  # If the second jobid is not provided, make the first job run as soon as possible
+  # Usage: _runman_swap <jobid> [<jobid>]
+  local jobid="${1}" swap_with="${2}"
   if [[ -z "${swap_with}" ]]; then
     swap_with="$(_runman_list 2>/dev/null | head -n1 | awk '{print $1}')"
   fi
-  tsp -U "${jobID}"-"${swap_with}"
+  tsp -U "${jobid}"-"${swap_with}"
 }
 
 _runman_tgfeed(){
@@ -241,9 +241,9 @@ _runman_help(){
     list
       Lists all unfinished jobs by the USER
       
-    swap <jobID> [<jobID>]
+    swap <jobid> [<jobid>]
       Swaps queue positions of the scheduled jobs.
-      If the second jobID is not provided, make the first job run ASAP.
+      If the second jobid is not provided, make the first job run ASAP.
       
     tgfeed
       Guides in setting up Telegram feed.
