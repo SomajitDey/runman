@@ -47,3 +47,5 @@ runman tgfeed
 
 ### Known Issue(s)
 - The key value pair `stderr=<path>` provided in `.job` file doesn't work, atleast in Ubuntu 20.04. The underlying reason seems to be a bug in task-spooler itself: `tsp -E` doesn't work as expected.
+
+- `runman` can't kill orphaned processes spawned by a job that has finished. The orphaned processes may consume CPU time at the background unbeknownst to `runman` or its core `tsp`. Hence, until fixed, it's the job of the user to make sure her job doesn't create (resource consuming) orphaned processes. For example, if her shell script spawns processes in background with `&`, she must use the `wait` statement at the end of her script, so that her job finishes only after all her spawned processes have exited.
