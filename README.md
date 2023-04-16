@@ -28,7 +28,7 @@ sudo install ./runman /usr/local/bin/
 export PATH="${HOME}/.bin:${PATH}" # Put this in ~/.bashrc.
 install -D -t "${HOME}"/.bin/ ./runman
 ```
-Also install [`tsp`](https://command-not-found.com/tsp), [`telegram`](https://github.com/fabianonline/telegram.sh#installation--configuration) and [`curl`](https://command-not-found.com/curl).
+Also install [`tsp`](https://command-not-found.com/tsp), [`telegram`](https://github.com/fabianonline/telegram.sh#installation--configuration), [`jq`](https://command-not-found.com/jq) and [`curl`](https://command-not-found.com/curl).
 
 ### Usage
 ```bash
