@@ -52,7 +52,7 @@ _read_job_file(){
   wclock= # Max. wall clock time job can run
   cwd="${PWD}" # Current working directory
   after= # ID of a job the current job is dependent on
-  array= # array job specs. Format:: start-end:stride
+  array= # Job array specs. Format:: start-end:stride
 
   # Source given .job file
   . "${jobfile}" || { _log "Problem reading ${jobfile}. Exiting."; exit 1;}
@@ -64,7 +64,7 @@ _read_job_file(){
 _create_job(){
   # Uses variables read/set by _read_job_file
   # Operates in a sub-shell so as not to corrupt global environment
-  # Outputs job id
+  # Outputs job id (Only the leader's job id for job arrays)
   (
   cd "${cwd}"
   export OMP_NUM_THREADS="${ncpu}"
@@ -95,8 +95,8 @@ _ts_onfinish(){
   local stdout="$(grep ^Stdout: <<< "${status}" | cut -d ' ' -f 2)"
   local stderr="$(grep ^Stderr: <<< "${status}" | cut -d ' ' -f 2)"
   local array_index="$(grep ^ArrayID: <<< "${status}" | cut -d ' ' -f 2 | cut -d '@' -f 1)"
-  mv -f "${tmp_stdout}" "${stdout}${array_index}"
-  mv -f "${tmp_stdout}.e" "${stderr}${array_index}"
+  [[ -n "${stdout}" ]] && mv -f "${tmp_stdout}" "${stdout}${array_index}" || rm -f "${tmp_stdout}"
+  [[ -n "${stderr}" ]] && mv -f "${tmp_stdout}.e" "${stderr}${array_index}" || rm -f "${tmp_stdout}.e"
   telegram -T "RunMan@$(hostname)" -M "${status}"
   # TODO: Kill children, if still running, once the process leader exits
 }
@@ -137,6 +137,15 @@ _runman_stat(){
   fi
   _log "Actual jobid=${jobid}"
   [[ "${jobid}" =~ [[:digit:]]+ ]] && tsp -i "${jobid}" 2>/dev/null || _log "Job has either finished or is non-existent"
+}
+
+_runman_array(){
+  # List all job IDs for a job array represented by the first element (leader)'s job ID.
+  # Useful for running _runman_abort , _runman_del etc. on all the elemental jobs of an array using a `for` loop or `xargs`.
+  # Usage: _runman_array <leader_jobID>
+  local jobid="${1}"
+  echo "${jobid}" # Job ID for leader
+  tsp | grep -E "[[[:digit:]]+@${USER}@${jobid}\([[:digit:]]+\)]" | awk '{print $1}' # Job ID for the remaining elements
 }
 
 _runman_abort(){
@@ -244,9 +253,11 @@ _runman_help(){
     
     sub <path to .job file> ...
       Reads provided .job file(s) and enqueues the corresponding jobs. Provides job ID at stdout.
+      For job arrays, only the job ID of the first elemental job (leader) is shown, which may represent the entire array.
       
     stat <job ID>
       Shows status of given job.
+      For job arrays any elemental job may be specified as <array_leader_ID>(<array_index>).
       
     abort [-]<jobid> [<SIGspec>]
       Aborts given job, i.e. its entire process tree, with SIGKILL.
@@ -258,7 +269,11 @@ _runman_help(){
       
     list
       Lists all unfinished jobs by the USER
-      
+    
+    array <leader_jobID>
+      Lists the job IDs of all elemental jobs for the given job array.
+      One may use this list with xargs for `del`, `abort` etc.
+    
     swap <jobid> [<jobid>]
       Swaps queue positions of the scheduled jobs.
       If the second jobid is not provided, make the first job run ASAP.
@@ -288,6 +303,8 @@ _runman_help(){
     wclock= # Max. wall clock time job can run
     cwd="\${PWD}" # Current working directory. Default is the directory from where runman is called
     after= # ID of a job the current job is dependent on
+    array= # Specify job arrays with array index in the range... m-n:s, where m is the starting integer, n the end one, s the stride.
+    # For job arrays, each elemental job gets its corresponding array index through the environment variable RUNMAN_ARRAY_INDEX.
     
 EOF
 }

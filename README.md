@@ -12,6 +12,7 @@ Run Man (`runman`) is a humble wrapper around [task-spooler](http://viric.name/s
     - dependency on a previous job
 - `USER` is notified via [Telegram](https://telegram.org/) on job completion by a [bot](https://github.com/fabianonline/telegram.sh).
 - Usual job management tools such as - status query, abort/removal, prioritization.
+- Job arrays similar to [PBS job arrays](https://centers.hpc.mil/users/advancedTopics/Job_Arrays.html)
 
 ### Installation
 ```bash
