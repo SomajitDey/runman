@@ -255,9 +255,8 @@ _runman_help(){
       Reads provided .job file(s) and enqueues the corresponding jobs. Provides job ID at stdout.
       For job arrays, only the job ID of the first elemental job (leader) is shown, which may represent the entire array.
       
-    stat <job ID>
-      Shows status of given job.
-      For job arrays any elemental job may be specified as <array_leader_ID>(<array_index>).
+    stat <job ID> | <array_leader_ID>(<array_index>)
+      Shows status of given job (standalone or elemental job of a job array). Example: stat 176(4)
       
     abort [-]<jobid> [<SIGspec>]
       Aborts given job, i.e. its entire process tree, with SIGKILL.
@@ -272,7 +271,7 @@ _runman_help(){
     
     array <leader_jobID>
       Lists the job IDs of all elemental jobs for the given job array.
-      One may use this list with xargs for `del`, `abort` etc.
+      One may use this list with xargs for del, abort etc.
     
     swap <jobid> [<jobid>]
       Swaps queue positions of the scheduled jobs.
